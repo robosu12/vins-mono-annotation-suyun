@@ -238,9 +238,9 @@ void process_loop_detection()
         {
             if(cur_kf!=NULL)
                 delete cur_kf;
-            cur_kf = keyframe_buf.front(); //从主线程滑动窗口中创建的关键帧buf中取出一帧
-            keyframe_buf.pop();
-        }
+            cur_kf = keyframe_buf.front(); //从主线程滑动窗口中创建的关键帧buf中取出最新帧；
+            keyframe_buf.pop();            //在闭环检测过程中插入的关键帧，全都抛弃；
+        }                                  //也即，关键帧数据库的增长速度跟闭环检测线程的运行频率相关；
         m_keyframe_buf.unlock();
         if (cur_kf != NULL)
         {
@@ -289,7 +289,7 @@ void process_loop_detection()
                 features_id_matched = cur_kf->features_id_matched; //features_id_matched 为匹配到的当前帧的点的id
                 // send loop info to VINS relocalization
                 int loop_fusion = 0;
-                //当剔除后的匹配点仍超过阈值时，认为该候选帧是一个正确的闭环帧,并将闭环帧 push 到 optimize_buf中
+                //当剔除后的匹配点仍超过阈值时，认为该候选帧是一个可能正确的闭环帧,并将闭环帧push到retrive_data_buf中，供滑动窗口优化使用，计算相对位姿；
                 if( (int)measurements_old_norm.size() > MIN_LOOP_NUM && global_frame_cnt - old_index > 35 && old_index > 30)
                 {
                     Quaterniond PnP_Q_old(PnP_R_old);
@@ -300,8 +300,8 @@ void process_loop_detection()
                     retrive_data.R_old = R_w_i_old;
                     retrive_data.relative_pose = false;
                     retrive_data.relocalized = false;
-                    retrive_data.measurements = measurements_old_norm;
-                    retrive_data.features_ids = features_id_matched;
+                    retrive_data.measurements = measurements_old_norm;  //候选帧中匹配点的坐标
+                    retrive_data.features_ids = features_id_matched;    //当前帧中匹配点的 id
                     retrive_data.loop_pose[0] = PnP_T_old.x();  
                     retrive_data.loop_pose[1] = PnP_T_old.y();
                     retrive_data.loop_pose[2] = PnP_T_old.z();
@@ -310,7 +310,9 @@ void process_loop_detection()
                     retrive_data.loop_pose[5] = PnP_Q_old.z();
                     retrive_data.loop_pose[6] = PnP_Q_old.w();
                     m_retrive_data_buf.lock();
-                    retrive_data_buf.push(retrive_data); //将闭环帧 push 到 optimize_buf中
+                    //将闭环帧push到retrive_data_buf中，供滑动窗口优化使用，计算相对位姿；
+                    //也即：闭环检测线程负责检测相似度高的候选关键帧 -- 滑动窗口计算候选帧与闭环帧的相对位姿，
+                    retrive_data_buf.push(retrive_data); 
                     m_retrive_data_buf.unlock();
                     cur_kf->detectLoop(old_index);
                     old_kf->is_looped = 1;
@@ -413,11 +415,11 @@ void process_pose_graph()
         int index = -1;
         while (!optimize_posegraph_buf.empty())
         {
-            index = optimize_posegraph_buf.front();
+            index = optimize_posegraph_buf.front(); //只需要最新检测到的闭环帧；
             optimize_posegraph_buf.pop();
         }
         m_posegraph_buf.unlock();
-        if(index != -1)
+        if(index != -1)     //只有检测到有效的闭环后，才会进行全局位姿图优化；
         {
             Vector3d correct_t = Vector3d::Zero();
             Matrix3d correct_r = Matrix3d::Identity();
@@ -507,7 +509,7 @@ void process()
                     estimator.retrive_data_vector.push_back(tmp_retrive_data); //加入闭环候选帧向量，供滑动窗口优化使用
                 }
                 m_retrive_data_buf.unlock();
-                //WINDOW_SIZE - 2 is key frame
+                //WINDOW_SIZE - 2 is key frame , 构造关键帧buf -- 供闭环检测线程使用；
                 if(estimator.marginalization_flag == 0 && estimator.solver_flag == estimator.NON_LINEAR)
                 {   
                     Vector3d vio_T_w_i = estimator.Ps[WINDOW_SIZE - 2];
@@ -535,7 +537,7 @@ void process()
                     keyframe_buf.push(keyframe); //将关键帧插入到关键帧buf，供闭环检测线程使用
                     m_keyframe_buf.unlock();
                     // update loop info
-                    //如果检测到有效的闭环，更新闭环帧之间的联系
+                    //如果滑动窗口计算出有效的闭环信息（当前帧与闭环帧的相对位姿），更新闭环帧之间的联系
                     if (!estimator.retrive_data_vector.empty() && estimator.retrive_data_vector[0].relative_pose)
                     {
                         if(estimator.Headers[0].stamp.toSec() == estimator.retrive_data_vector[0].header)
@@ -547,11 +549,12 @@ void process()
                                 cur_kf->removeLoop();
                             }
                             else 
-                            {
+                            {    //更新当前关键帧与闭环帧间的连接关系，包括相对平移，旋转，视角差；
                                 cur_kf->updateLoopConnection( estimator.retrive_data_vector[0].relative_t, 
                                                               estimator.retrive_data_vector[0].relative_q, 
                                                               estimator.retrive_data_vector[0].relative_yaw);
                                 m_posegraph_buf.lock();
+                                //将有效闭环帧加入到位姿图优化buf中 -- 供posegraph线程使用；
                                 optimize_posegraph_buf.push(estimator.retrive_data_vector[0].cur_index);
                                 m_posegraph_buf.unlock();
                             }

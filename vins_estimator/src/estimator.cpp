@@ -791,16 +791,18 @@ void Estimator::optimization()
                 {                                                             //也就是闭环必须是当前滑动窗口中的帧检测到的
                     relocalize = true;  //检测到闭环，则重定位成功；
                     ceres::LocalParameterization *local_parameterization = new PoseLocalParameterization();
+                    //滑动窗口优化的是当前帧与闭环帧的相对位姿，闭环帧位姿不变
                     problem.AddParameterBlock(retrive_data_vector[k].loop_pose, SIZE_POSE, local_parameterization);
                     loop_window_index = i;
                     loop_constraint_num++;
                     int retrive_feature_index = 0;
                     int feature_index = -1;
+                    //根据闭环检测线程计算的闭环帧与当前帧的匹配点，构建重投影误差，优化当前帧与闭环帧间的相对位姿；
                     for (auto &it_per_id : f_manager.feature)
                     {
                         it_per_id.used_num = it_per_id.feature_per_frame.size();
                         if (!(it_per_id.used_num >= 2 && it_per_id.start_frame < WINDOW_SIZE - 2))
-                            continue;
+                            continue;  //超过两次观测的点才能被三角化为3D点，才能进行重投影；
 
                         ++feature_index;
                         int start = it_per_id.start_frame;
@@ -816,7 +818,8 @@ void Estimator::optimization()
                                 Vector3d pts_j = Vector3d(retrive_data_vector[k].measurements[retrive_feature_index].x, retrive_data_vector[k].measurements[retrive_feature_index].y, 1.0);
                                 Vector3d pts_i = it_per_id.feature_per_frame[0].point;
                                 
-                                ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j);
+                                //闭环帧中匹配到的特征点的坐标与当前观测的重投影误差；
+                                ProjectionFactor *f = new ProjectionFactor(pts_i, pts_j); 
                                 problem.AddResidualBlock(f, loss_function, para_Pose[start], retrive_data_vector[k].loop_pose, para_Ex_Pose[0], para_Feature[feature_index]);
                             
                                 retrive_feature_index++;

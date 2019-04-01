@@ -322,7 +322,7 @@ struct FourDOFWeightError
 		T t_i_ij[3];
 		RotationMatrixRotatePoint(i_R_w, t_w_ij, t_i_ij);
 
-		residuals[0] = (t_i_ij[0] - T(t_x)) * T(weight);
+		residuals[0] = (t_i_ij[0] - T(t_x)) * T(weight); //闭环边构成的误差权重要更大一些；
 		residuals[1] = (t_i_ij[1] - T(t_y)) * T(weight);
 		residuals[2] = (t_i_ij[2] - T(t_z)) * T(weight);
 		residuals[3] = NormalizeAngle((yaw_j[0] - yaw_i[0] - T(relative_yaw))) * T(weight) / T(10.0);
